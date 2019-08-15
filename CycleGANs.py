@@ -1,20 +1,21 @@
 from __future__ import print_function, division
-import scipy
-from keras.datasets import mnist
-from keras_contrib.layers.normalization.instancenormalization import InstanceNormalization
-from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Concatenate
-from keras.layers import BatchNormalization, Activation, ZeroPadding2D
+
+
+import os
+import matplotlib.pyplot as plt
+import numpy as np
+import cv2
+from keras.layers import Input, Dropout, Concatenate
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.convolutional import UpSampling2D, Conv2D
-from keras.models import Sequential, Model
+from keras.models import Model
 from keras.optimizers import Adam
-import datetime
-import matplotlib.pyplot as plt
-import sys
-import numpy as np
-import os
+from keras_contrib.layers.normalization.instancenormalization import InstanceNormalization
+
 
 import DataLoader
+
+results_path = '/media/antonio/Data/DataSets/Projects/Stickerizer/FaceToSticker/Results'
 
 
 class CycleGAN():
@@ -26,10 +27,10 @@ class CycleGAN():
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
 
         # Configure data loader
-        self.dataset_name = 'apple2orange'
+        self.dataset_name = 'FaceToSticker'
         # Use the DataLoader object to import a preprocessed dataset
-        self.data_loader = DataLoader(dataset_name=self.dataset_name,
-                                      img_res=(self.img_rows, self.img_cols))
+        self.data_loader = DataLoader.DataLoader(dataset_name=self.dataset_name,
+                                                 img_res=(self.img_rows, self.img_cols))
 
         # Calculate output shape of D (PatchGAN)
         patch = int(self.img_rows / 2 ** 4)
@@ -81,6 +82,12 @@ class CycleGAN():
         # For the combined model we will only train the generators
         self.d_A.trainable = False
         self.d_B.trainable = False
+        self.d_A.compile(loss='mse',
+                         optimizer=optimizer,
+                         metrics=['accuracy'])
+        self.d_B.compile(loss='mse',
+                         optimizer=optimizer,
+                         metrics=['accuracy'])
 
         # Discriminators determines validity of translated images
         valid_A = self.d_A(fake_A)
@@ -99,8 +106,6 @@ class CycleGAN():
                                             self.lambda_id, self.lambda_id],
                               optimizer=optimizer)
 
-
-class CycleGAN(CycleGAN):
     @staticmethod
     def conv2d(layer_input, filters, f_size=4, normalization=True):
         """Discriminator layer"""
@@ -123,8 +128,6 @@ class CycleGAN(CycleGAN):
         u = Concatenate()([u, skip_input])
         return u
 
-
-class CycleGAN(CycleGAN):
     def build_generator(self):
         """U-Net Generator"""
         # Image input
@@ -147,27 +150,25 @@ class CycleGAN(CycleGAN):
 
         return Model(d0, output_img)
 
-
-class CycleGAN(CycleGAN):
     def build_discriminator(self):
-      img = Input(shape=self.img_shape)
+        img = Input(shape=self.img_shape)
 
-      d1 = self.conv2d(img, self.df, normalization=False)
-      d2 = self.conv2d(d1, self.df * 2)
-      d3 = self.conv2d(d2, self.df * 4)
-      d4 = self.conv2d(d3, self.df * 8)
+        d1 = self.conv2d(img, self.df, normalization=False)
+        d2 = self.conv2d(d1, self.df * 2)
+        d3 = self.conv2d(d2, self.df * 4)
+        d4 = self.conv2d(d3, self.df * 8)
 
-      validity = Conv2D(1, kernel_size=4, strides=1, padding='same')(d4)
+        validity = Conv2D(1, kernel_size=4, strides=1, padding='same')(d4)
 
-      return Model(img, validity)
+        return Model(img, validity)
 
-
-class CycleGAN(CycleGAN):
     def sample_images(self, epoch, batch_i):
         r, c = 2, 3
 
-        imgs_A = self.data_loader.load_data(domain="A", batch_size=1, is_testing=True)
-        imgs_B = self.data_loader.load_data(domain="B", batch_size=1, is_testing=True)
+        imgs_A = self.data_loader.load_data(
+            domain="A", batch_size=1, is_testing=True)
+        imgs_B = self.data_loader.load_data(
+            domain="B", batch_size=1, is_testing=True)
 
         # Translate images to the other domain
         fake_B = self.g_AB.predict(imgs_A)
@@ -176,7 +177,8 @@ class CycleGAN(CycleGAN):
         reconstr_A = self.g_BA.predict(fake_B)
         reconstr_B = self.g_AB.predict(fake_A)
 
-        gen_imgs = np.concatenate([imgs_A, fake_B, reconstr_A, imgs_B, fake_A, reconstr_B])
+        gen_imgs = np.concatenate(
+            [imgs_A, fake_B, reconstr_A, imgs_B, fake_A, reconstr_B])
 
         # Rescale images 0 - 1
         gen_imgs = 0.5 * gen_imgs + 0.5
@@ -190,11 +192,10 @@ class CycleGAN(CycleGAN):
                 axs[i, j].set_title(titles[j])
                 axs[i, j].axis('off')
                 cnt += 1
-        fig.savefig("images/%s/%d_%d.png" % (self.dataset_name, epoch, batch_i))
-        plt.show()
+        fig.savefig(os.path.join(results_path, "{}_{}_{}.png".format(
+            self.dataset_name, epoch, batch_i)))
+        # plt.show()
 
-
-class CycleGAN(CycleGAN):
     def train(self, epochs, batch_size=1, sample_interval=50):
         # Adversarial loss ground truths
         valid = np.ones((batch_size,) + self.disc_patch)
@@ -236,6 +237,23 @@ class CycleGAN(CycleGAN):
                 if batch_i % sample_interval == 0:
                     self.sample_images(epoch, batch_i)
 
+                print('Epoch: {}/{} Batch {}/{}: D_loss = {} G_loss = {}'.format(
+                    epoch,
+                    epochs,
+                    batch_i,
+                    batch_size,
+                    d_loss,
+                    g_loss))
 
+    def save(self):
+        self.d_A.save("Discriminator_A")
+        self.d_B.save("Discriminator_B")
+        self.g_BA.save("Generator_BA")
+        self.g_AB.save("Generator_AB")
+
+
+print("Starting")
 cycle_gan = CycleGAN()
-cycle_gan.train(epochs=100, batch_size=64, sample_interval=10)
+print("Training")
+cycle_gan.train(epochs=100, batch_size=32, sample_interval=20)
+cycle_gan.save()
